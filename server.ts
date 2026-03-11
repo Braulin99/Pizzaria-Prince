@@ -12,6 +12,20 @@ const __dirname = path.dirname(__filename);
 let db: Database.Database;
 try {
   const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/pizzeria.db' : 'pizzeria.db';
+  
+  // On Vercel, copy the bundled database to /tmp for write access if it doesn't exist
+  if (process.env.NODE_ENV === 'production' && !fs.existsSync(dbPath)) {
+    const bundledDbPath = path.join(process.cwd(), 'pizzeria.db');
+    if (fs.existsSync(bundledDbPath)) {
+      try {
+        fs.copyFileSync(bundledDbPath, dbPath);
+        console.log('Copied bundled database to /tmp');
+      } catch (copyError) {
+        console.error('Failed to copy bundled database:', copyError);
+      }
+    }
+  }
+
   db = new Database(dbPath);
   console.log(`Database initialized at ${dbPath}`);
 } catch (error) {

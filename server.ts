@@ -85,78 +85,77 @@ if (reviewCount.count === 0) {
 }
 
 export const app = express();
+app.use(express.json());
+
+// Multer setup for image uploads
+const uploadDir = process.env.NODE_ENV === 'production' ? '/tmp/uploads' : 'uploads';
+const upload = multer({ dest: uploadDir });
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// API Routes
+app.get("/api/menu", (req, res) => {
+  const menu = db.prepare("SELECT * FROM menu").all();
+  res.json(menu);
+});
+
+app.post("/api/menu", (req, res) => {
+  const { name, description, price, image_url, category } = req.body;
+  const info = db.prepare("INSERT INTO menu (name, description, price, image_url, category) VALUES (?, ?, ?, ?, ?)").run(name, description, price, image_url, category);
+  res.json({ id: info.lastInsertRowid });
+});
+
+app.put("/api/menu/:id", (req, res) => {
+  const { name, description, price, image_url, category } = req.body;
+  db.prepare("UPDATE menu SET name = ?, description = ?, price = ?, image_url = ?, category = ? WHERE id = ?").run(name, description, price, image_url, category, req.params.id);
+  res.json({ success: true });
+});
+
+app.delete("/api/menu/:id", (req, res) => {
+  db.prepare("DELETE FROM menu WHERE id = ?").run(req.params.id);
+  res.json({ success: true });
+});
+
+app.get("/api/reviews", (req, res) => {
+  const reviews = db.prepare("SELECT * FROM reviews ORDER BY id DESC").all();
+  res.json(reviews);
+});
+
+app.get("/api/content", (req, res) => {
+  const content = db.prepare("SELECT * FROM site_content").all();
+  const contentMap = (content as any[]).reduce((acc, item) => {
+    acc[item.key] = item.value;
+    return acc;
+  }, {});
+  res.json(contentMap);
+});
+
+app.post("/api/content", (req, res) => {
+  const { key, value } = req.body;
+  db.prepare("INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)").run(key, value);
+  res.json({ success: true });
+});
+
+app.post("/api/login", (req, res) => {
+  const { email, password } = req.body;
+  if (email === "braulio@gmail.com" && password === "vendas") {
+    res.json({ success: true, token: "mock-token" });
+  } else {
+    res.status(401).json({ success: false, message: "Invalid credentials" });
+  }
+});
+
+// Serve uploaded files
+app.use("/uploads", express.static(uploadDir));
+
+app.post("/api/upload", upload.single("image"), (req: any, res) => {
+  if (!req.file) return res.status(400).send("No file uploaded.");
+  res.json({ url: `/uploads/${req.file.filename}` });
+});
 
 async function startServer() {
   const PORT = 3000;
-
-  app.use(express.json());
-
-  // Multer setup for image uploads
-  const uploadDir = process.env.NODE_ENV === 'production' ? '/tmp/uploads' : 'uploads';
-  const upload = multer({ dest: uploadDir });
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-
-  // API Routes
-  app.get("/api/menu", (req, res) => {
-    const menu = db.prepare("SELECT * FROM menu").all();
-    res.json(menu);
-  });
-
-  app.post("/api/menu", (req, res) => {
-    const { name, description, price, image_url, category } = req.body;
-    const info = db.prepare("INSERT INTO menu (name, description, price, image_url, category) VALUES (?, ?, ?, ?, ?)").run(name, description, price, image_url, category);
-    res.json({ id: info.lastInsertRowid });
-  });
-
-  app.put("/api/menu/:id", (req, res) => {
-    const { name, description, price, image_url, category } = req.body;
-    db.prepare("UPDATE menu SET name = ?, description = ?, price = ?, image_url = ?, category = ? WHERE id = ?").run(name, description, price, image_url, category, req.params.id);
-    res.json({ success: true });
-  });
-
-  app.delete("/api/menu/:id", (req, res) => {
-    db.prepare("DELETE FROM menu WHERE id = ?").run(req.params.id);
-    res.json({ success: true });
-  });
-
-  app.get("/api/reviews", (req, res) => {
-    const reviews = db.prepare("SELECT * FROM reviews ORDER BY id DESC").all();
-    res.json(reviews);
-  });
-  
-  app.get("/api/content", (req, res) => {
-    const content = db.prepare("SELECT * FROM site_content").all();
-    const contentMap = (content as any[]).reduce((acc, item) => {
-      acc[item.key] = item.value;
-      return acc;
-    }, {});
-    res.json(contentMap);
-  });
-
-  app.post("/api/content", (req, res) => {
-    const { key, value } = req.body;
-    db.prepare("INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)").run(key, value);
-    res.json({ success: true });
-  });
-
-  app.post("/api/login", (req, res) => {
-    const { email, password } = req.body;
-    if (email === "braulio@gmail.com" && password === "vendas") {
-      res.json({ success: true, token: "mock-token" });
-    } else {
-      res.status(401).json({ success: false, message: "Invalid credentials" });
-    }
-  });
-
-  // Serve uploaded files
-  app.use("/uploads", express.static(uploadDir));
-
-  app.post("/api/upload", upload.single("image"), (req: any, res) => {
-    if (!req.file) return res.status(400).send("No file uploaded.");
-    res.json({ url: `/uploads/${req.file.filename}` });
-  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

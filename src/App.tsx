@@ -942,6 +942,7 @@ const AdminDashboard = () => {
   const { menu, refreshMenu } = useContext(MenuContext);
   const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<number | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -967,9 +968,10 @@ const AdminDashboard = () => {
     refreshMenu();
   };
 
-  const handleDelete = async (id: number) => {
-    if (confirm('Tem certeza que deseja apagar este item?')) {
-      await fetch(`/api/menu/${id}`, { method: 'DELETE' });
+  const handleDelete = async () => {
+    if (itemToDelete) {
+      await fetch(`/api/menu/${itemToDelete}`, { method: 'DELETE' });
+      setItemToDelete(null);
       refreshMenu();
     }
   };
@@ -1024,7 +1026,7 @@ const AdminDashboard = () => {
                   <Edit2 size={18} /> Editar
                 </button>
                 <button 
-                  onClick={() => handleDelete(item.id)}
+                  onClick={() => setItemToDelete(item.id)}
                   className="flex-1 py-3 glass rounded-xl hover:text-red-400 transition-all flex items-center justify-center gap-2 font-bold border border-white/10"
                 >
                   <Trash2 size={18} /> Apagar
@@ -1070,6 +1072,23 @@ const AdminDashboard = () => {
                       required
                     />
                   </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Categoria</label>
+                    <select 
+                      value={editingItem?.category}
+                      onChange={e => setEditingItem(prev => ({ ...prev!, category: e.target.value }))}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg appearance-none"
+                      required
+                    >
+                      <option value="Pizza">Pizza</option>
+                      <option value="Entrada">Entrada</option>
+                      <option value="Bebida">Bebida</option>
+                      <option value="Sobremesa">Sobremesa</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="space-y-3">
                     <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Preço (€)</label>
                     <input 
@@ -1122,6 +1141,46 @@ const AdminDashboard = () => {
                   Guardar Prato no Menu
                 </button>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {itemToDelete && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setItemToDelete(null)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="glass p-12 rounded-[3rem] w-full max-w-md relative z-10 border border-white/10 shadow-2xl text-center"
+            >
+              <div className="w-20 h-20 bg-red-400/20 rounded-full flex items-center justify-center text-red-400 mx-auto mb-8">
+                <Trash2 size={40} />
+              </div>
+              <h3 className="text-2xl font-serif font-bold mb-4">Confirmar Exclusão</h3>
+              <p className="text-white/40 mb-10">Tem certeza que deseja apagar este item? Esta ação não pode ser desfeita.</p>
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setItemToDelete(null)}
+                  className="flex-1 py-4 glass rounded-2xl font-bold hover:bg-white/10 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={handleDelete}
+                  className="flex-1 py-4 bg-red-500 hover:bg-red-600 rounded-2xl font-bold transition-all shadow-xl shadow-red-500/20"
+                >
+                  Apagar
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

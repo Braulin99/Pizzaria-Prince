@@ -85,15 +85,20 @@ const Navbar = () => {
       isScrolled ? "bg-bg/90 backdrop-blur-xl border-b border-white/10 py-3" : "bg-transparent py-6"
     )}>
       <div className="max-w-7xl mx-auto flex justify-between items-center">
-        <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-12 h-12 bg-primary rounded-2xl flex items-center justify-center group-hover:rotate-12 transition-all duration-500 shadow-lg shadow-primary/20">
-            <Pizza className="text-white" size={28} />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-2xl font-serif font-bold tracking-tight leading-none">
-              Prince<span className="text-primary">.</span>
-            </span>
-            <span className="text-[10px] uppercase tracking-[0.3em] text-white/40 font-bold">Pizzaria Gourmet</span>
+        <Link to="/" className="flex flex-col items-start group">
+          <span className="text-[9px] md:text-[10px] uppercase tracking-[0.3em] text-primary font-bold mb-3 px-3 py-1 glass border border-primary/20 rounded-full opacity-100">
+            A Melhor Experiência de Luanda
+          </span>
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-primary rounded-xl flex items-center justify-center group-hover:rotate-12 transition-all duration-500 shadow-lg shadow-primary/20">
+              <Pizza className="text-white" size={24} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-xl font-serif font-bold tracking-tight leading-none">
+                Prince<span className="text-primary">.</span>
+              </span>
+              <span className="text-[9px] uppercase tracking-[0.3em] text-white/40 font-bold">Pizzaria Gourmet</span>
+            </div>
           </div>
         </Link>
 
@@ -317,7 +322,7 @@ const Home = () => {
   return (
     <div className="overflow-hidden">
       {/* Hero Section */}
-      <section className="relative h-screen flex items-center px-6">
+      <section className="relative h-screen flex items-center pt-32 px-6">
         <div className="absolute inset-0 z-0">
           <img 
             src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=1920&q=80" 
@@ -336,15 +341,6 @@ const Home = () => {
             transition={{ duration: 1, ease: "easeOut" }}
             className="max-w-3xl"
           >
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="inline-flex items-center gap-3 px-5 py-2 glass rounded-full text-[10px] font-bold tracking-[0.4em] uppercase text-primary mb-8 border border-primary/20"
-            >
-              <Award size={14} /> A Melhor Experiência de Luanda
-            </motion.div>
-            
             <h1 className="text-7xl md:text-9xl font-serif font-bold leading-[0.9] mb-10 tracking-tighter">
               A Arte da <br />
               <span className="text-primary italic">Pizza</span> Perfeita

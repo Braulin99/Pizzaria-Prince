@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/index.ts": {
-      "includeFiles": "pizzeria.db"
+      "includeFiles": "../pizzeria.db"
     }
   },
   "rewrites": [
@@ -13,6 +13,9 @@
     {
       "source": "/uploads/(.*)",
       "destination": "/api/index.ts"
+    },
+    {
+      "handle": "filesystem"
     },
     {
       "source": "/(.*)",

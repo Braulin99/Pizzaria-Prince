@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: gallery
+    // Fields: imageUrl (string), alt (string), caption (string), order (number)
+    //
+    // Collection: site_content
+    // Fields: key (string), value (string), type (string), description (string)
+    //
+    // Collection: menu
+    // Fields: name (string), description (string), price (number), image_url (string), category (string)
+    //
+    // Collection: users
+    // Fields: role (string), email (string)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "brauliocarvalho2003@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Rules for Gallery
+    match /gallery/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Rules for Site Content
+    match /site_content/{contentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Rules for Menu
+    match /menu/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Rules for Users (Admin only)
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -26,7 +26,20 @@ import {
   ShoppingBag,
   Minus
 } from 'lucide-react';
-import { MenuItem, Review, CartItem } from './types';
+import { MenuItem, Review, CartItem, GalleryItem, SiteContentItem } from './types';
+import { db, auth, loginWithGoogle, logout, handleFirestoreError, OperationType } from './firebase';
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  query, 
+  orderBy,
+  setDoc
+} from 'firebase/firestore';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -38,8 +51,8 @@ function cn(...inputs: ClassValue[]) {
 const CartContext = React.createContext<{
   cart: CartItem[];
   addToCart: (item: MenuItem) => void;
-  removeFromCart: (id: number) => void;
-  updateQuantity: (id: number, delta: number) => void;
+  removeFromCart: (id: string) => void;
+  updateQuantity: (id: string, delta: number) => void;
   clearCart: () => void;
   totalItems: number;
   totalPrice: number;
@@ -56,11 +69,35 @@ const CartContext = React.createContext<{
 const MenuContext = React.createContext<{
   menu: MenuItem[];
   loading: boolean;
-  refreshMenu: () => Promise<void>;
 }>({
   menu: [],
   loading: true,
-  refreshMenu: async () => {},
+});
+
+const SiteContext = React.createContext<{
+  content: Record<string, string>;
+  rawContent: SiteContentItem[];
+  gallery: GalleryItem[];
+  loading: boolean;
+  getContent: (key: string, defaultValue: string) => string;
+}>({
+  content: {},
+  rawContent: [],
+  gallery: [],
+  loading: true,
+  getContent: (k, d) => d,
+});
+
+const AuthContext = React.createContext<{
+  user: User | null;
+  loading: boolean;
+  isAdmin: boolean;
+  logout: () => Promise<void>;
+}>({
+  user: null,
+  loading: true,
+  isAdmin: false,
+  logout: async () => {},
 });
 
 // --- Components ---
@@ -69,6 +106,8 @@ const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const { totalItems, cart, updateQuantity, removeFromCart, totalPrice, clearCart } = React.useContext(CartContext);
+  const { isAdmin, user, logout } = React.useContext(AuthContext);
+  const { getContent } = React.useContext(SiteContext);
   const location = useLocation();
 
   useEffect(() => {
@@ -76,8 +115,6 @@ const Navbar = () => {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  const isAdmin = location.pathname.startsWith('/admin');
 
   return (
     <nav className={cn(
@@ -87,7 +124,7 @@ const Navbar = () => {
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         <Link to="/" className="flex flex-col items-start group">
           <span className="text-[9px] md:text-[10px] uppercase tracking-[0.3em] text-primary font-bold mb-3 px-3 py-1 glass border border-primary/20 rounded-full opacity-100">
-            A Melhor Experiência de Luanda
+            {getContent('navbar_tag', 'A Melhor Experiência de Luanda')}
           </span>
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 bg-primary rounded-xl flex items-center justify-center group-hover:rotate-12 transition-all duration-500 shadow-lg shadow-primary/20">
@@ -95,9 +132,9 @@ const Navbar = () => {
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-xl font-serif font-bold tracking-tight leading-none">
-                Prince<span className="text-primary">.</span>
+                {getContent('site_name_1', 'Prince')}<span className="text-primary">{getContent('site_name_dot', '.')}</span>
               </span>
-              <span className="text-[9px] uppercase tracking-[0.3em] text-white/40 font-bold">Pizzaria Gourmet</span>
+              <span className="text-[9px] uppercase tracking-[0.3em] text-white/40 font-bold">{getContent('site_subtitle', 'Pizzaria Gourmet')}</span>
             </div>
           </div>
         </Link>
@@ -132,12 +169,17 @@ const Navbar = () => {
             )}
           </button>
 
-          {isAdmin ? (
-            <button onClick={() => { localStorage.removeItem('adminToken'); window.location.href = '/'; }} className="flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer bg-red-400/10 px-4 py-2 rounded-full transition-all">
-              <LogOut size={16} /> Sair
-            </button>
+          {user ? (
+            <div className="flex items-center gap-4">
+              {isAdmin && (
+                <Link to="/admin/dashboard" className="px-6 py-2.5 glass rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-primary/50">Admin</Link>
+              )}
+              <button onClick={() => logout()} className="flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer bg-red-400/10 px-4 py-2 rounded-full transition-all">
+                <LogOut size={16} /> Sair
+              </button>
+            </div>
           ) : (
-            <Link to="/admin" className="px-6 py-2.5 glass rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-primary/50">Admin</Link>
+            <Link to="/admin" className="px-6 py-2.5 glass rounded-full hover:bg-white/10 transition-all border border-white/10 hover:border-primary/50">Entrar</Link>
           )}
         </div>
 
@@ -259,65 +301,70 @@ const WhatsAppButton = () => (
   </a>
 );
 
-const Footer = () => (
-  <footer className="bg-card border-t border-white/5 pt-24 pb-12 px-6">
-    <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-16">
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Pizza className="text-primary" size={32} />
-          <span className="text-2xl font-serif font-bold">Pizzaria Prince</span>
+const Footer = () => {
+  const { getContent } = useContext(SiteContext);
+  
+  return (
+    <footer className="bg-card border-t border-white/5 pt-24 pb-12 px-6">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-16">
+        <div className="space-y-6">
+          <div className="flex items-center gap-3">
+            <Pizza className="text-primary" size={32} />
+            <span className="text-2xl font-serif font-bold">{getContent('site_name', 'Pizzaria Prince')}</span>
+          </div>
+          <p className="text-white/50 text-sm leading-relaxed">
+            {getContent('footer_about', 'A elevar o padrão da pizza em Luanda. Ingredientes selecionados, técnicas tradicionais e uma paixão inabalável pela gastronomia italiana.')}
+          </p>
+          <div className="flex gap-4">
+            <a 
+              href={getContent('facebook_url', 'https://www.facebook.com/p/Pizzaria-prince-100095641595733/')} 
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-12 h-12 glass rounded-2xl flex items-center justify-center hover:bg-primary transition-all duration-300"
+            >
+              <Facebook size={20} />
+            </a>
+          </div>
         </div>
-        <p className="text-white/50 text-sm leading-relaxed">
-          A elevar o padrão da pizza em Luanda. Ingredientes selecionados, técnicas tradicionais e uma paixão inabalável pela gastronomia italiana.
-        </p>
-        <div className="flex gap-4">
-          <a 
-            href="https://www.facebook.com/p/Pizzaria-prince-100095641595733/" 
-            target="_blank"
-            rel="noopener noreferrer"
-            className="w-12 h-12 glass rounded-2xl flex items-center justify-center hover:bg-primary transition-all duration-300"
-          >
-            <Facebook size={20} />
-          </a>
+        
+        <div>
+          <h4 className="font-bold mb-8 uppercase tracking-[0.2em] text-xs text-primary">{getContent('footer_nav_title', 'Navegação')}</h4>
+          <ul className="space-y-4 text-sm text-white/50">
+            <li><Link to="/" className="hover:text-white transition-colors">{getContent('nav_home', 'Início')}</Link></li>
+            <li><Link to="/menu" className="hover:text-white transition-colors">{getContent('nav_menu', 'Menu Digital')}</Link></li>
+            <li><Link to="/reviews" className="hover:text-white transition-colors">{getContent('nav_reviews', 'O que dizem de nós')}</Link></li>
+            <li><Link to="/contact" className="hover:text-white transition-colors">{getContent('nav_contact', 'Fale Connosco')}</Link></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="font-bold mb-8 uppercase tracking-[0.2em] text-xs text-primary">{getContent('footer_info_title', 'Informações')}</h4>
+          <ul className="space-y-4 text-sm text-white/50">
+            <li className="flex items-center gap-3"><Phone size={16} className="text-primary" /> {getContent('contact_phone', '+244 939 668 465')}</li>
+            <li className="flex items-center gap-3"><MapPin size={16} className="text-primary" /> {getContent('contact_address_short', 'Centralidade de Cacuaco, Luanda')}</li>
+            <li className="flex items-center gap-3"><Clock size={16} className="text-primary" /> {getContent('contact_hours_short', 'Diariamente: 09:00 - 20:00')}</li>
+          </ul>
         </div>
       </div>
       
-      <div>
-        <h4 className="font-bold mb-8 uppercase tracking-[0.2em] text-xs text-primary">Navegação</h4>
-        <ul className="space-y-4 text-sm text-white/50">
-          <li><Link to="/" className="hover:text-white transition-colors">Início</Link></li>
-          <li><Link to="/menu" className="hover:text-white transition-colors">Menu Digital</Link></li>
-          <li><Link to="/reviews" className="hover:text-white transition-colors">O que dizem de nós</Link></li>
-          <li><Link to="/contact" className="hover:text-white transition-colors">Fale Connosco</Link></li>
-        </ul>
+      <div className="max-w-7xl mx-auto mt-24 pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-4 text-white/30 text-[10px] uppercase tracking-[0.3em] font-bold">
+        <span>© {new Date().getFullYear()} {getContent('site_name', 'Pizzaria Prince')}. {getContent('footer_rights', 'Todos os direitos reservados.')}</span>
+        <div className="flex gap-8">
+          <a href="#" className="hover:text-white transition-colors">{getContent('footer_privacy', 'Privacidade')}</a>
+          <a href="#" className="hover:text-white transition-colors">{getContent('footer_terms', 'Termos')}</a>
+        </div>
       </div>
-
-      <div>
-        <h4 className="font-bold mb-8 uppercase tracking-[0.2em] text-xs text-primary">Informações</h4>
-        <ul className="space-y-4 text-sm text-white/50">
-          <li className="flex items-center gap-3"><Phone size={16} className="text-primary" /> +244 939 668 465</li>
-          <li className="flex items-center gap-3"><MapPin size={16} className="text-primary" /> Centralidade de Cacuaco, Luanda</li>
-          <li className="flex items-center gap-3"><Clock size={16} className="text-primary" /> Diariamente: 09:00 - 20:00</li>
-        </ul>
-      </div>
-    </div>
-    
-    <div className="max-w-7xl mx-auto mt-24 pt-8 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-4 text-white/30 text-[10px] uppercase tracking-[0.3em] font-bold">
-      <span>© 2024 Pizzaria Prince. Todos os direitos reservados.</span>
-      <div className="flex gap-8">
-        <a href="#" className="hover:text-white transition-colors">Privacidade</a>
-        <a href="#" className="hover:text-white transition-colors">Termos</a>
-      </div>
-    </div>
-  </footer>
-);
+    </footer>
+  );
+};
 
 // --- Pages ---
 
 const Home = () => {
   const { menu } = useContext(MenuContext);
-  const featuredItems = menu.slice(0, 3);
   const { addToCart } = useContext(CartContext);
+  const { gallery, getContent } = useContext(SiteContext);
+  const featuredItems = menu.slice(0, 3);
 
   return (
     <div className="overflow-hidden">
@@ -325,7 +372,7 @@ const Home = () => {
       <section className="relative h-screen flex items-center pt-32 px-6">
         <div className="absolute inset-0 z-0">
           <img 
-            src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=1920&q=80" 
+            src={getContent('hero_image', 'https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=1920&q=80')} 
             className="w-full h-full object-cover scale-105 animate-slow-zoom"
             alt="Hero Background"
             referrerPolicy="no-referrer"
@@ -341,13 +388,19 @@ const Home = () => {
             transition={{ duration: 1, ease: "easeOut" }}
             className="max-w-3xl"
           >
+            <div className="inline-block px-6 py-2 glass rounded-full border border-white/10 mb-8">
+              <span className="text-primary font-bold uppercase tracking-[0.4em] text-[10px]">
+                {getContent('hero_tag', 'A MELHOR EXPERIÊNCIA DE LUANDA')}
+              </span>
+            </div>
+
             <h1 className="text-7xl md:text-9xl font-serif font-bold leading-[0.9] mb-10 tracking-tighter">
-              A Arte da <br />
-              <span className="text-primary italic">Pizza</span> Perfeita
+              {getContent('hero_title_1', 'A Arte da')} <br />
+              <span className="text-primary italic">{getContent('hero_title_2', 'Pizza')}</span> {getContent('hero_title_3', 'Perfeita')}
             </h1>
             
             <p className="text-xl text-white/60 mb-12 leading-relaxed max-w-xl font-medium">
-              Descubra o equilíbrio perfeito entre a tradição italiana e os sabores contemporâneos. Cada fatia é uma obra-prima artesanal.
+              {getContent('hero_description', 'Descubra o equilíbrio perfeito entre a tradição italiana e os sabores contemporâneos. Cada fatia é uma obra-prima artesanal.')}
             </p>
             
             <div className="flex flex-wrap gap-6">
@@ -385,7 +438,7 @@ const Home = () => {
           >
             <div className="aspect-[4/5] rounded-[3rem] overflow-hidden">
               <img 
-                src="https://images.unsplash.com/photo-1541745537411-b8046dc6d66c?auto=format&fit=crop&w=800&q=80" 
+                src={getContent('about_image', 'https://images.unsplash.com/photo-1541745537411-b8046dc6d66c?auto=format&fit=crop&w=800&q=80')} 
                 className="w-full h-full object-cover"
                 alt="Chef working"
                 referrerPolicy="no-referrer"
@@ -397,36 +450,36 @@ const Home = () => {
                   <Award size={32} />
                 </div>
                 <div>
-                  <h4 className="text-3xl font-bold font-serif">7+</h4>
-                  <p className="text-xs uppercase tracking-widest text-white font-bold">Anos de Comprometimento</p>
+                  <h4 className="text-3xl font-bold font-serif">{getContent('about_years', '7+')}</h4>
+                  <p className="text-xs uppercase tracking-widest text-white font-bold">{getContent('about_years_label', 'Anos de Comprometimento')}</p>
                 </div>
               </div>
-              <p className="text-sm text-white/60 max-w-[200px]">Comprometidos com a excelência em cada detalhe.</p>
+              <p className="text-sm text-white/60 max-w-[200px]">{getContent('about_badge_text', 'Comprometidos com a excelência em cada detalhe.')}</p>
             </div>
           </motion.div>
 
           <div className="space-y-10">
             <div className="space-y-4">
-              <span className="text-primary font-bold uppercase tracking-[0.3em] text-xs">Nossa História</span>
-              <h2 className="text-5xl md:text-6xl font-serif font-bold leading-tight">Paixão pela <span className="italic text-primary">Autenticidade</span></h2>
+              <span className="text-primary font-bold uppercase tracking-[0.3em] text-xs">{getContent('about_tag', 'Nossa História')}</span>
+              <h2 className="text-5xl md:text-6xl font-serif font-bold leading-tight">{getContent('about_title_1', 'Paixão pela')} <span className="italic text-primary">{getContent('about_title_2', 'Autenticidade')}</span></h2>
             </div>
             <p className="text-lg text-white/60 leading-relaxed">
-              Na Pizzaria Prince, acreditamos que a comida é uma linguagem universal de amor. Fundada com o sonho de trazer a verdadeira essência da pizza italiana para Luanda, selecionamos cada ingrediente com rigor — desde a farinha tipo 00 até aos tomates San Marzano.
+              {getContent('about_description', 'Na Pizzaria Prince, acreditamos que a comida é uma linguagem universal de amor. Fundada com o sonho de trazer a verdadeira essência da pizza italiana para Luanda, selecionamos cada ingrediente com rigor — desde a farinha tipo 00 até aos tomates San Marzano.')}
             </p>
             <div className="grid grid-cols-2 gap-8">
               <div className="space-y-3">
                 <div className="w-12 h-12 glass rounded-xl flex items-center justify-center text-primary">
                   <UtensilsCrossed size={24} />
                 </div>
-                <h4 className="font-bold">Massa Artesanal</h4>
-                <p className="text-sm text-white/40">Fermentação lenta de 48h para máxima leveza.</p>
+                <h4 className="font-bold">{getContent('feature_1_title', 'Massa Artesanal')}</h4>
+                <p className="text-sm text-white/40">{getContent('feature_1_desc', 'Fermentação lenta de 48h para máxima leveza.')}</p>
               </div>
               <div className="space-y-3">
                 <div className="w-12 h-12 glass rounded-xl flex items-center justify-center text-primary">
                   <Users size={24} />
                 </div>
-                <h4 className="font-bold">Ambiente Único</h4>
-                <p className="text-sm text-white/40">O lugar perfeito para momentos inesquecíveis.</p>
+                <h4 className="font-bold">{getContent('feature_2_title', 'Ambiente Único')}</h4>
+                <p className="text-sm text-white/40">{getContent('feature_2_desc', 'O lugar perfeito para momentos inesquecíveis.')}</p>
               </div>
             </div>
             <Link to="/contact" className="inline-flex items-center gap-3 text-primary font-bold group text-lg">
@@ -494,19 +547,45 @@ const Home = () => {
             <h2 className="text-5xl md:text-6xl font-serif font-bold">Momentos <span className="text-primary italic">Prince</span></h2>
           </div>
           
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 h-[600px]">
-            <div className="col-span-2 row-span-2 rounded-[2.5rem] overflow-hidden">
-              <img src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=800&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 1" referrerPolicy="no-referrer" />
-            </div>
-            <div className="rounded-[2rem] overflow-hidden">
-              <img src="https://images.unsplash.com/photo-1574126154517-d1e0d89ef734?auto=format&fit=crop&w=400&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 2" referrerPolicy="no-referrer" />
-            </div>
-            <div className="rounded-[2rem] overflow-hidden">
-              <img src="https://images.unsplash.com/photo-1590947132387-155cc02f3212?auto=format&fit=crop&w=400&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 3" referrerPolicy="no-referrer" />
-            </div>
-            <div className="col-span-2 rounded-[2rem] overflow-hidden">
-              <img src="https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 4" referrerPolicy="no-referrer" />
-            </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 min-h-[600px]">
+            {gallery.length > 0 ? (
+              gallery.slice(0, 5).map((item, idx) => (
+                <div 
+                  key={item.id} 
+                  className={cn(
+                    "rounded-[2rem] overflow-hidden group relative",
+                    idx === 0 ? "col-span-2 row-span-2 rounded-[2.5rem]" : "",
+                    idx === 3 ? "col-span-2" : ""
+                  )}
+                >
+                  <img 
+                    src={item.imageUrl} 
+                    className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" 
+                    alt={item.alt} 
+                    referrerPolicy="no-referrer" 
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <p className="text-white font-serif italic text-xl">{item.caption}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              // Fallback if gallery is empty
+              <>
+                <div className="col-span-2 row-span-2 rounded-[2.5rem] overflow-hidden">
+                  <img src="https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=800&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 1" referrerPolicy="no-referrer" />
+                </div>
+                <div className="rounded-[2rem] overflow-hidden">
+                  <img src="https://images.unsplash.com/photo-1574126154517-d1e0d89ef734?auto=format&fit=crop&w=400&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 2" referrerPolicy="no-referrer" />
+                </div>
+                <div className="rounded-[2rem] overflow-hidden">
+                  <img src="https://images.unsplash.com/photo-1590947132387-155cc02f3212?auto=format&fit=crop&w=400&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 3" referrerPolicy="no-referrer" />
+                </div>
+                <div className="col-span-2 rounded-[2rem] overflow-hidden">
+                  <img src="https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80" className="w-full h-full object-cover hover:scale-105 transition-transform duration-700" alt="Gallery 4" referrerPolicy="no-referrer" />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -581,6 +660,7 @@ const Home = () => {
 
 const Menu = () => {
   const { menu, loading } = useContext(MenuContext);
+  const { getContent } = useContext(SiteContext);
   const [activeCategory, setActiveCategory] = useState('Todos');
   const { addToCart } = useContext(CartContext);
 
@@ -597,7 +677,7 @@ const Menu = () => {
           animate={{ opacity: 1, y: 0 }}
           className="text-primary font-bold uppercase tracking-[0.4em] text-xs"
         >
-          Experiência Gastronómica
+          {getContent('menu_tag', 'Experiência Gastronómica')}
         </motion.span>
         <motion.h1 
           initial={{ opacity: 0, y: 20 }}
@@ -605,7 +685,7 @@ const Menu = () => {
           transition={{ delay: 0.1 }}
           className="text-6xl md:text-8xl font-serif font-bold"
         >
-          O Nosso <span className="text-primary italic">Menu</span>
+          {getContent('menu_title_1', 'O Nosso')} <span className="text-primary italic">{getContent('menu_title_2', 'Menu')}</span>
         </motion.h1>
         <motion.p 
           initial={{ opacity: 0, y: 20 }}
@@ -613,7 +693,7 @@ const Menu = () => {
           transition={{ delay: 0.2 }}
           className="text-white/50 max-w-2xl mx-auto text-lg leading-relaxed"
         >
-          Uma viagem culinária através de ingredientes frescos e receitas tradicionais. Explore a nossa seleção de pizzas artesanais e acompanhamentos.
+          {getContent('menu_description', 'Uma viagem culinária através de ingredientes frescos e receitas tradicionais. Explore a nossa seleção de pizzas artesanais e acompanhamentos.')}
         </motion.p>
       </div>
 
@@ -688,6 +768,7 @@ const Menu = () => {
 
 const Reviews = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
+  const { getContent } = useContext(SiteContext);
 
   useEffect(() => {
     fetch('/api/reviews')
@@ -698,14 +779,14 @@ const Reviews = () => {
   return (
     <div className="pt-40 pb-32 px-6 max-w-7xl mx-auto">
       <div className="text-center mb-24 space-y-6">
-        <span className="text-primary font-bold uppercase tracking-[0.4em] text-xs">Testemunhos</span>
-        <h1 className="text-6xl md:text-8xl font-serif font-bold">O Que <span className="text-primary italic">Dizem?</span></h1>
+        <span className="text-primary font-bold uppercase tracking-[0.4em] text-xs">{getContent('reviews_tag', 'Testemunhos')}</span>
+        <h1 className="text-6xl md:text-8xl font-serif font-bold">{getContent('reviews_title_1', 'O Que')} <span className="text-primary italic">{getContent('reviews_title_2', 'Dizem?')}</span></h1>
         <div className="flex items-center justify-center gap-4">
           <div className="flex text-primary gap-1">
             {[...Array(5)].map((_, i) => <Star key={i} size={24} fill={i < 4 ? "currentColor" : "none"} />)}
           </div>
-          <span className="text-2xl font-bold">3.6 / 5</span>
-          <span className="text-white/30 font-medium">(212 críticas verificadas)</span>
+          <span className="text-2xl font-bold">{getContent('reviews_rating', '3.6 / 5')}</span>
+          <span className="text-white/30 font-medium">({getContent('reviews_count', '212 críticas verificadas')})</span>
         </div>
       </div>
 
@@ -755,6 +836,7 @@ const Reviews = () => {
 
 const Contact = () => {
   const [submitted, setSubmitted] = useState(false);
+  const { getContent } = useContext(SiteContext);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -766,10 +848,10 @@ const Contact = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-32">
         <div className="space-y-12">
           <div className="space-y-6">
-            <span className="text-primary font-bold uppercase tracking-[0.4em] text-xs">Contacto</span>
-            <h1 className="text-6xl md:text-8xl font-serif font-bold leading-tight">Vamos <br /><span className="text-primary italic">Conversar</span></h1>
+            <span className="text-primary font-bold uppercase tracking-[0.4em] text-xs">{getContent('contact_tag', 'Contacto')}</span>
+            <h1 className="text-6xl md:text-8xl font-serif font-bold leading-tight">{getContent('contact_title_1', 'Vamos')} <br /><span className="text-primary italic">{getContent('contact_title_2', 'Conversar')}</span></h1>
             <p className="text-white/50 text-xl leading-relaxed max-w-lg">
-              Tem alguma dúvida ou deseja fazer uma reserva especial? A nossa equipa está pronta para o atender.
+              {getContent('contact_description', 'Tem alguma dúvida ou deseja fazer uma reserva especial? A nossa equipa está pronta para o atender.')}
             </p>
           </div>
 
@@ -779,8 +861,8 @@ const Contact = () => {
                 <MapPin size={32} />
               </div>
               <div>
-                <h4 className="font-bold text-2xl mb-2">Onde Estamos</h4>
-                <p className="text-white/50 text-lg">4F8M+R7W, Centralidade de Cacuaco, Luanda, Angola</p>
+                <h4 className="font-bold text-2xl mb-2">{getContent('contact_address_title', 'Onde Estamos')}</h4>
+                <p className="text-white/50 text-lg">{getContent('contact_address', '4F8M+R7W, Centralidade de Cacuaco, Luanda, Angola')}</p>
               </div>
             </div>
             <div className="flex items-start gap-8 group">
@@ -788,8 +870,8 @@ const Contact = () => {
                 <Phone size={32} />
               </div>
               <div>
-                <h4 className="font-bold text-2xl mb-2">Ligue-nos</h4>
-                <p className="text-white/50 text-lg">+244 939 668 465</p>
+                <h4 className="font-bold text-2xl mb-2">{getContent('contact_phone_title', 'Ligue-nos')}</h4>
+                <p className="text-white/50 text-lg">{getContent('contact_phone', '+244 939 668 465')}</p>
               </div>
             </div>
             <div className="flex items-start gap-8 group">
@@ -797,8 +879,8 @@ const Contact = () => {
                 <Clock size={32} />
               </div>
               <div>
-                <h4 className="font-bold text-2xl mb-2">Horário de Funcionamento</h4>
-                <p className="text-white/50 text-lg">Segunda a Domingo: 09:00 - 20:00</p>
+                <h4 className="font-bold text-2xl mb-2">{getContent('contact_hours_title', 'Horário de Funcionamento')}</h4>
+                <p className="text-white/50 text-lg">{getContent('contact_hours', 'Segunda a Domingo: 09:00 - 20:00')}</p>
               </div>
             </div>
           </div>
@@ -871,26 +953,28 @@ const Contact = () => {
 };
 
 const AdminLogin = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const { user, isAdmin, loading } = useContext(AuthContext);
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    const data = await res.json();
-    if (data.success) {
-      localStorage.setItem('adminToken', data.token);
-      navigate('/admin/dashboard');
-    } else {
-      setError(data.message);
+  useEffect(() => {
+    if (!loading && user) {
+      if (isAdmin) {
+        navigate('/admin/dashboard');
+      } else {
+        // Not an admin, maybe show a message or redirect
+      }
+    }
+  }, [user, isAdmin, loading, navigate]);
+
+  const handleGoogleLogin = async () => {
+    try {
+      await loginWithGoogle();
+    } catch (error) {
+      console.error("Login failed", error);
     }
   };
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
 
   return (
     <div className="min-h-screen flex items-center justify-center px-6">
@@ -903,239 +987,246 @@ const AdminLogin = () => {
           <p className="text-white/30 mt-3 font-medium uppercase tracking-widest text-xs">Acesso Administrativo</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
-          <div className="space-y-3">
-            <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Email Profissional</label>
-            <input 
-              type="email" 
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg" 
-              required
-            />
-          </div>
-          <div className="space-y-3">
-            <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Senha de Acesso</label>
-            <input 
-              type="password" 
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg" 
-              required
-            />
-          </div>
-          {error && <p className="text-red-400 text-sm text-center font-bold bg-red-400/10 py-3 rounded-xl">{error}</p>}
-          <button className="w-full py-5 bg-primary hover:bg-primary-dark rounded-2xl font-bold transition-all text-lg shadow-xl shadow-primary/20">
-            Entrar no Painel
+        <div className="space-y-8">
+          <button 
+            onClick={handleGoogleLogin}
+            className="w-full py-5 bg-white text-black hover:bg-white/90 rounded-2xl font-bold transition-all text-lg shadow-xl flex items-center justify-center gap-4"
+          >
+            <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="Google" />
+            Entrar com Google
           </button>
-        </form>
+          
+          {!isAdmin && user && (
+            <p className="text-red-400 text-sm text-center font-bold bg-red-400/10 py-3 rounded-xl">
+              Acesso restrito a administradores.
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
 };
 
 const AdminDashboard = () => {
-  const { menu, refreshMenu } = useContext(MenuContext);
-  const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null);
+  const { menu } = useContext(MenuContext);
+  const { rawContent, gallery } = useContext(SiteContext);
+  const { isAdmin, loading: authLoading } = useContext(AuthContext);
+  const [activeTab, setActiveTab] = useState<'menu' | 'gallery' | 'content'>('menu');
+  const [editingItem, setEditingItem] = useState<any | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState<number | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<{ id: string, collection: string } | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!localStorage.getItem('adminToken')) {
+    if (!authLoading && !isAdmin) {
       navigate('/admin');
-      return;
     }
-  }, [navigate]);
+  }, [isAdmin, authLoading, navigate]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    const method = editingItem?.id ? 'PUT' : 'POST';
-    const url = editingItem?.id ? `/api/menu/${editingItem.id}` : '/api/menu';
-    
-    await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editingItem)
-    });
-    
-    setIsModalOpen(false);
-    setEditingItem(null);
-    refreshMenu();
+    try {
+      if (activeTab === 'menu') {
+        const { id, ...data } = editingItem;
+        if (id) {
+          await updateDoc(doc(db, 'menu', id), data);
+        } else {
+          await addDoc(collection(db, 'menu'), data);
+        }
+      } else if (activeTab === 'gallery') {
+        const { id, ...data } = editingItem;
+        if (id) {
+          await updateDoc(doc(db, 'gallery', id), data);
+        } else {
+          await addDoc(collection(db, 'gallery'), data);
+        }
+      } else if (activeTab === 'content') {
+        const { id, ...data } = editingItem;
+        if (id) {
+          await updateDoc(doc(db, 'site_content', id), data);
+        } else {
+          await addDoc(collection(db, 'site_content'), data);
+        }
+      }
+      setIsModalOpen(false);
+      setEditingItem(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, activeTab);
+    }
   };
 
   const handleDelete = async () => {
     if (itemToDelete) {
-      await fetch(`/api/menu/${itemToDelete}`, { method: 'DELETE' });
-      setItemToDelete(null);
-      refreshMenu();
+      try {
+        await deleteDoc(doc(db, itemToDelete.collection, itemToDelete.id));
+        setItemToDelete(null);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, itemToDelete.collection);
+      }
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('image', file);
-
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData
-    });
-    const data = await res.json();
-    setEditingItem(prev => ({ ...prev, image_url: data.url }));
-  };
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center">Carregando...</div>;
 
   return (
     <div className="pt-40 pb-32 px-6 max-w-7xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-16 gap-8">
         <div>
-          <h1 className="text-5xl font-serif font-bold">Gestão de <span className="text-primary italic">Menu</span></h1>
-          <p className="text-white/40 mt-2 text-lg">Controle total sobre os pratos e preços da Pizzaria Prince.</p>
+          <h1 className="text-5xl font-serif font-bold">Painel de <span className="text-primary italic">Controlo</span></h1>
+          <p className="text-white/40 mt-2 text-lg">Gestão total da Pizzaria Prince.</p>
         </div>
-        <button 
-          onClick={() => { setEditingItem({ name: '', description: '', price: 0, image_url: '', category: 'Pizza' }); setIsModalOpen(true); }}
-          className="px-8 py-4 bg-primary hover:bg-primary-dark rounded-2xl font-bold flex items-center gap-3 shadow-xl shadow-primary/20 text-lg"
-        >
-          <Plus size={24} /> Novo Prato
-        </button>
+        <div className="flex gap-4">
+          <button 
+            onClick={() => {
+              if (activeTab === 'menu') setEditingItem({ name: '', description: '', price: 0, image_url: '', category: 'Pizza' });
+              if (activeTab === 'gallery') setEditingItem({ imageUrl: '', alt: '', caption: '', order: gallery.length });
+              if (activeTab === 'content') setEditingItem({ key: '', value: '', type: 'text', description: '' });
+              setIsModalOpen(true);
+            }}
+            className="px-8 py-4 bg-primary hover:bg-primary-dark rounded-2xl font-bold flex items-center gap-3 shadow-xl shadow-primary/20 text-lg"
+          >
+            <Plus size={24} /> Novo {activeTab === 'menu' ? 'Prato' : activeTab === 'gallery' ? 'Momento' : 'Conteúdo'}
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
-        {menu.map(item => (
-          <div key={item.id} className="glass p-8 rounded-[2.5rem] flex flex-col gap-6 border border-white/5 hover:border-primary/20 transition-all">
-            <div className="relative aspect-video rounded-2xl overflow-hidden">
-              <img src={item.image_url} className="w-full h-full object-cover" alt={item.name} referrerPolicy="no-referrer" />
-              <div className="absolute top-4 right-4 px-3 py-1 bg-primary rounded-lg font-bold text-xs">
-                {item.price}€
-              </div>
-            </div>
-            <div className="flex-1 space-y-2">
-              <h3 className="font-bold text-2xl">{item.name}</h3>
-              <p className="text-white/40 text-sm line-clamp-2">{item.description}</p>
-              <div className="flex gap-3 pt-4">
-                <button 
-                  onClick={() => { setEditingItem(item); setIsModalOpen(true); }}
-                  className="flex-1 py-3 glass rounded-xl hover:text-primary transition-all flex items-center justify-center gap-2 font-bold border border-white/10"
-                >
-                  <Edit2 size={18} /> Editar
-                </button>
-                <button 
-                  onClick={() => setItemToDelete(item.id)}
-                  className="flex-1 py-3 glass rounded-xl hover:text-red-400 transition-all flex items-center justify-center gap-2 font-bold border border-white/10"
-                >
-                  <Trash2 size={18} /> Apagar
-                </button>
-              </div>
-            </div>
-          </div>
+      <div className="flex gap-4 mb-12 border-b border-white/10 pb-4 overflow-x-auto">
+        {(['menu', 'gallery', 'content'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "px-6 py-2 rounded-xl font-bold transition-all text-sm uppercase tracking-widest",
+              activeTab === tab ? "bg-primary text-white" : "text-white/40 hover:text-white"
+            )}
+          >
+            {tab === 'menu' ? 'Menu' : tab === 'gallery' ? 'Galeria' : 'Conteúdo do Site'}
+          </button>
         ))}
       </div>
+
+      {activeTab === 'menu' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10">
+          {menu.map(item => (
+            <div key={item.id} className="glass p-8 rounded-[2.5rem] flex flex-col gap-6 border border-white/5 hover:border-primary/20 transition-all">
+              <div className="relative aspect-video rounded-2xl overflow-hidden">
+                <img src={item.image_url} className="w-full h-full object-cover" alt={item.name} referrerPolicy="no-referrer" />
+                <div className="absolute top-4 right-4 px-3 py-1 bg-primary rounded-lg font-bold text-xs">{item.price}€</div>
+              </div>
+              <div className="flex-1 space-y-2">
+                <h3 className="font-bold text-2xl">{item.name}</h3>
+                <p className="text-white/40 text-sm line-clamp-2">{item.description}</p>
+                <div className="flex gap-3 pt-4">
+                  <button onClick={() => { setEditingItem(item); setIsModalOpen(true); }} className="flex-1 py-3 glass rounded-xl hover:text-primary transition-all flex items-center justify-center gap-2 font-bold border border-white/10"><Edit2 size={18} /> Editar</button>
+                  <button onClick={() => setItemToDelete({ id: item.id, collection: 'menu' })} className="flex-1 py-3 glass rounded-xl hover:text-red-400 transition-all flex items-center justify-center gap-2 font-bold border border-white/10"><Trash2 size={18} /> Apagar</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'gallery' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {gallery.map(item => (
+            <div key={item.id} className="glass p-4 rounded-3xl space-y-4 border border-white/5">
+              <div className="aspect-square rounded-2xl overflow-hidden">
+                <img src={item.imageUrl} className="w-full h-full object-cover" alt={item.alt} referrerPolicy="no-referrer" />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { setEditingItem(item); setIsModalOpen(true); }} className="flex-1 py-2 glass rounded-lg hover:text-primary transition-all flex items-center justify-center border border-white/10"><Edit2 size={16} /></button>
+                <button onClick={() => setItemToDelete({ id: item.id, collection: 'gallery' })} className="flex-1 py-2 glass rounded-lg hover:text-red-400 transition-all flex items-center justify-center border border-white/10"><Trash2 size={16} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'content' && (
+        <div className="space-y-4">
+          {rawContent.map(item => (
+            <div key={item.id} className="glass p-6 rounded-2xl flex justify-between items-center border border-white/5">
+              <div>
+                <h4 className="font-bold text-primary text-xs uppercase tracking-widest mb-1">{item.key}</h4>
+                <p className="text-white/60 line-clamp-1">{item.value}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => { 
+                  setEditingItem(item); 
+                  setIsModalOpen(true); 
+                }} className="p-3 glass rounded-xl hover:text-primary transition-all border border-white/10"><Edit2 size={18} /></button>
+                <button onClick={() => setItemToDelete({ id: item.id, collection: 'site_content' })} className="p-3 glass rounded-xl hover:text-red-400 transition-all border border-white/10"><Trash2 size={18} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <AnimatePresence>
         {isModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setIsModalOpen(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 50 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 50 }}
-              className="glass p-12 rounded-[3.5rem] w-full max-w-3xl relative z-10 overflow-y-auto max-h-[90vh] border border-white/10 shadow-2xl"
-            >
-              <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-white/40 hover:text-white transition-colors">
-                <X size={32} />
-              </button>
-              <h2 className="text-4xl font-serif font-bold mb-10">
-                {editingItem?.id ? 'Editar Prato' : 'Criar Novo Prato'}
-              </h2>
-
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+            <motion.div initial={{ opacity: 0, scale: 0.9, y: 50 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 50 }} className="glass p-12 rounded-[3.5rem] w-full max-w-3xl relative z-10 overflow-y-auto max-h-[90vh] border border-white/10 shadow-2xl">
+              <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-white/40 hover:text-white transition-colors"><X size={32} /></button>
+              <h2 className="text-4xl font-serif font-bold mb-10">{editingItem?.id ? 'Editar' : 'Criar'} {activeTab === 'menu' ? 'Prato' : activeTab === 'gallery' ? 'Momento' : 'Conteúdo'}</h2>
               <form onSubmit={handleSave} className="space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Nome do Prato</label>
-                    <input 
-                      type="text" 
-                      value={editingItem?.name}
-                      onChange={e => setEditingItem(prev => ({ ...prev!, name: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg" 
-                      required
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Categoria</label>
-                    <select 
-                      value={editingItem?.category}
-                      onChange={e => setEditingItem(prev => ({ ...prev!, category: e.target.value }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg appearance-none"
-                      required
-                    >
-                      <option value="Pizza">Pizza</option>
-                      <option value="Entrada">Entrada</option>
-                      <option value="Bebida">Bebida</option>
-                      <option value="Sobremesa">Sobremesa</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Preço (€)</label>
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      value={editingItem?.price}
-                      onChange={e => setEditingItem(prev => ({ ...prev!, price: parseFloat(e.target.value) }))}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg" 
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Descrição Detalhada</label>
-                  <textarea 
-                    rows={4}
-                    value={editingItem?.description}
-                    onChange={e => setEditingItem(prev => ({ ...prev!, description: e.target.value }))}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg resize-none" 
-                    required
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Imagem do Prato</label>
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <input 
-                      type="text" 
-                      value={editingItem?.image_url}
-                      onChange={e => setEditingItem(prev => ({ ...prev!, image_url: e.target.value }))}
-                      placeholder="URL da imagem (ex: https://...)"
-                      className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:border-primary outline-none transition-all text-lg" 
-                    />
-                    <label className="px-8 py-4 glass rounded-2xl cursor-pointer hover:bg-white/10 transition-all flex items-center justify-center gap-3 border border-white/10 font-bold">
-                      <Camera size={24} />
-                      <span>Upload</span>
-                      <input type="file" className="hidden" onChange={handleFileUpload} accept="image/*" />
-                    </label>
-                  </div>
-                </div>
-
-                {editingItem?.image_url && (
-                  <div className="aspect-video rounded-3xl overflow-hidden border border-white/10">
-                    <img src={editingItem.image_url} className="w-full h-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
-                  </div>
+                {activeTab === 'menu' && (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Nome</label>
+                        <input type="text" value={editingItem?.name || ''} onChange={e => setEditingItem({ ...editingItem, name: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" required />
+                      </div>
+                      <div className="space-y-3">
+                        <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Categoria</label>
+                        <select value={editingItem?.category || 'Pizza'} onChange={e => setEditingItem({ ...editingItem, category: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none appearance-none">
+                          <option value="Pizza">Pizza</option><option value="Entrada">Entrada</option><option value="Bebida">Bebida</option><option value="Sobremesa">Sobremesa</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Preço (€)</label>
+                      <input type="number" step="0.01" value={isNaN(editingItem?.price) ? '' : editingItem?.price ?? ''} onChange={e => setEditingItem({ ...editingItem, price: parseFloat(e.target.value) })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" required />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Descrição</label>
+                      <textarea rows={4} value={editingItem?.description || ''} onChange={e => setEditingItem({ ...editingItem, description: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none resize-none" required />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Imagem URL</label>
+                      <input type="text" value={editingItem?.image_url || ''} onChange={e => setEditingItem({ ...editingItem, image_url: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" required />
+                    </div>
+                  </>
                 )}
-
-                <button className="w-full py-5 bg-primary hover:bg-primary-dark rounded-2xl font-bold transition-all text-xl shadow-xl shadow-primary/20">
-                  Guardar Prato no Menu
-                </button>
+                {activeTab === 'gallery' && (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Imagem URL</label>
+                      <input type="text" value={editingItem?.imageUrl || ''} onChange={e => setEditingItem({ ...editingItem, imageUrl: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" required />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Alt Text</label>
+                      <input type="text" value={editingItem?.alt || ''} onChange={e => setEditingItem({ ...editingItem, alt: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" required />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Ordem</label>
+                      <input type="number" value={isNaN(editingItem?.order) ? '' : editingItem?.order ?? ''} onChange={e => setEditingItem({ ...editingItem, order: parseInt(e.target.value) })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" required />
+                    </div>
+                  </>
+                )}
+                {activeTab === 'content' && (
+                  <>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Chave (Key)</label>
+                      <input type="text" value={editingItem?.key || ''} onChange={e => setEditingItem({ ...editingItem, key: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none" disabled={!!editingItem?.id} required />
+                    </div>
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/30 ml-2">Valor (Value)</label>
+                      <textarea rows={6} value={editingItem?.value || ''} onChange={e => setEditingItem({ ...editingItem, value: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none resize-none" required />
+                    </div>
+                  </>
+                )}
+                <button className="w-full py-5 bg-primary hover:bg-primary-dark rounded-2xl font-bold transition-all text-xl shadow-xl shadow-primary/20">Guardar Alterações</button>
               </form>
             </motion.div>
           </div>
@@ -1145,37 +1236,14 @@ const AdminDashboard = () => {
       <AnimatePresence>
         {itemToDelete && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setItemToDelete(null)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="glass p-12 rounded-[3rem] w-full max-w-md relative z-10 border border-white/10 shadow-2xl text-center"
-            >
-              <div className="w-20 h-20 bg-red-400/20 rounded-full flex items-center justify-center text-red-400 mx-auto mb-8">
-                <Trash2 size={40} />
-              </div>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setItemToDelete(null)} className="absolute inset-0 bg-black/90 backdrop-blur-md" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="glass p-12 rounded-[3rem] w-full max-w-md relative z-10 border border-white/10 shadow-2xl text-center">
+              <div className="w-20 h-20 bg-red-400/20 rounded-full flex items-center justify-center text-red-400 mx-auto mb-8"><Trash2 size={40} /></div>
               <h3 className="text-2xl font-serif font-bold mb-4">Confirmar Exclusão</h3>
               <p className="text-white/40 mb-10">Tem certeza que deseja apagar este item? Esta ação não pode ser desfeita.</p>
               <div className="flex gap-4">
-                <button 
-                  onClick={() => setItemToDelete(null)}
-                  className="flex-1 py-4 glass rounded-2xl font-bold hover:bg-white/10 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={handleDelete}
-                  className="flex-1 py-4 bg-red-500 hover:bg-red-600 rounded-2xl font-bold transition-all shadow-xl shadow-red-500/20"
-                >
-                  Apagar
-                </button>
+                <button onClick={() => setItemToDelete(null)} className="flex-1 py-4 glass rounded-2xl font-bold hover:bg-white/10 transition-all">Cancelar</button>
+                <button onClick={handleDelete} className="flex-1 py-4 bg-red-500 hover:bg-red-600 rounded-2xl font-bold transition-all shadow-xl shadow-red-500/20">Apagar</button>
               </div>
             </motion.div>
           </div>
@@ -1189,22 +1257,67 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loadingMenu, setLoadingMenu] = useState(true);
+  const [gallery, setGallery] = useState<GalleryItem[]>([]);
+  const [siteContent, setSiteContent] = useState<Record<string, string>>({});
+  const [rawSiteContent, setRawSiteContent] = useState<SiteContentItem[]>([]);
+  const [loadingSite, setLoadingSite] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const refreshMenu = useCallback(async () => {
-    try {
-      const res = await fetch('/api/menu');
-      const data = await res.json();
-      setMenu(data);
-      setLoadingMenu(false);
-    } catch (error) {
-      console.error('Failed to fetch menu:', error);
-      setLoadingMenu(false);
-    }
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
+      if (user) {
+        // Simple admin check: check if email matches or check a user doc
+        const adminEmail = "brauliocarvalho2003@gmail.com";
+        setIsAdmin(user.email === adminEmail);
+      } else {
+        setIsAdmin(false);
+      }
+      setLoadingAuth(false);
+    });
+    return () => unsubscribe();
   }, []);
 
+  // Menu Listener
   useEffect(() => {
-    refreshMenu();
-  }, [refreshMenu]);
+    const q = query(collection(db, 'menu'), orderBy('name'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MenuItem));
+      setMenu(items);
+      setLoadingMenu(false);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'menu'));
+    return () => unsubscribe();
+  }, []);
+
+  // Gallery Listener
+  useEffect(() => {
+    const q = query(collection(db, 'gallery'), orderBy('order'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as GalleryItem));
+      setGallery(items);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'gallery'));
+    return () => unsubscribe();
+  }, []);
+
+  // Site Content Listener
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'site_content'), (snapshot) => {
+      const content: Record<string, string> = {};
+      const raw: SiteContentItem[] = [];
+      snapshot.docs.forEach(doc => {
+        const data = doc.data() as any;
+        content[data.key] = data.value;
+        raw.push({ id: doc.id, ...data });
+      });
+      setSiteContent(content);
+      setRawSiteContent(raw);
+      setLoadingSite(false);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'site_content'));
+    return () => unsubscribe();
+  }, []);
 
   const addToCart = (item: MenuItem) => {
     setCart(prev => {
@@ -1216,11 +1329,11 @@ export default function App() {
     });
   };
 
-  const removeFromCart = (id: number) => {
+  const removeFromCart = (id: string) => {
     setCart(prev => prev.filter(i => i.id !== id));
   };
 
-  const updateQuantity = (id: number, delta: number) => {
+  const updateQuantity = (id: string, delta: number) => {
     setCart(prev => prev.map(i => {
       if (i.id === id) {
         const newQty = Math.max(1, i.quantity + delta);
@@ -1236,26 +1349,36 @@ export default function App() {
   const totalPrice = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
   return (
-    <MenuContext.Provider value={{ menu, loading: loadingMenu, refreshMenu }}>
-      <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateQuantity, clearCart, totalItems, totalPrice }}>
-        <Router>
-          <div className="min-h-screen flex flex-col selection:bg-primary selection:text-white">
-            <Navbar />
-            <main className="flex-grow">
-              <Routes>
-                <Route path="/" element={<Home />} />
-                <Route path="/menu" element={<Menu />} />
-                <Route path="/reviews" element={<Reviews />} />
-                <Route path="/contact" element={<Contact />} />
-                <Route path="/admin" element={<AdminLogin />} />
-                <Route path="/admin/dashboard" element={<AdminDashboard />} />
-              </Routes>
-            </main>
-            <WhatsAppButton />
-            <Footer />
-          </div>
-        </Router>
-      </CartContext.Provider>
-    </MenuContext.Provider>
+    <AuthContext.Provider value={{ user, loading: loadingAuth, isAdmin, logout }}>
+      <SiteContext.Provider value={{ 
+        content: siteContent, 
+        rawContent: rawSiteContent,
+        gallery, 
+        loading: loadingSite,
+        getContent: (key: string, defaultValue: string) => siteContent[key] || defaultValue
+      }}>
+        <MenuContext.Provider value={{ menu, loading: loadingMenu }}>
+          <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateQuantity, clearCart, totalItems, totalPrice }}>
+            <Router>
+              <div className="min-h-screen flex flex-col selection:bg-primary selection:text-white">
+                <Navbar />
+                <main className="flex-grow">
+                  <Routes>
+                    <Route path="/" element={<Home />} />
+                    <Route path="/menu" element={<Menu />} />
+                    <Route path="/reviews" element={<Reviews />} />
+                    <Route path="/contact" element={<Contact />} />
+                    <Route path="/admin" element={<AdminLogin />} />
+                    <Route path="/admin/dashboard" element={<AdminDashboard />} />
+                  </Routes>
+                </main>
+                <WhatsAppButton />
+                <Footer />
+              </div>
+            </Router>
+          </CartContext.Provider>
+        </MenuContext.Provider>
+      </SiteContext.Provider>
+    </AuthContext.Provider>
   );
 }

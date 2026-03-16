@@ -1,5 +1,5 @@
 export interface MenuItem {
-  id: number;
+  id: string;
   name: string;
   description: string;
   price: number;
@@ -8,14 +8,31 @@ export interface MenuItem {
 }
 
 export interface Review {
-  id: number;
+  id: string;
   author: string;
   content: string;
   rating: number;
   date: string;
 }
 
-export interface CartItem extends MenuItem {
+export interface GalleryItem {
+  id: string;
+  imageUrl: string;
+  alt: string;
+  caption?: string;
+  order: number;
+}
+
+export interface SiteContentItem {
+  id: string;
+  key: string;
+  value: string;
+  type: 'text' | 'image';
+  description: string;
+}
+
+export interface CartItem extends Omit<MenuItem, 'id'> {
+  id: string;
   quantity: number;
 }
 

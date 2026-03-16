@@ -15,9 +15,6 @@
       "destination": "/api/index.ts"
     },
     {
-      "handle": "filesystem"
-    },
-    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

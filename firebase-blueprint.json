@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "GalleryItem": {
+      "title": "Gallery Item",
+      "description": "An image for the moments gallery",
+      "type": "object",
+      "properties": {
+        "imageUrl": { "type": "string", "description": "URL of the image" },
+        "alt": { "type": "string", "description": "Alt text for the image" },
+        "caption": { "type": "string", "description": "Optional caption" },
+        "order": { "type": "number", "description": "Display order" }
+      },
+      "required": ["imageUrl", "alt"]
+    },
+    "SiteContent": {
+      "title": "Site Content",
+      "description": "Dynamic text and images for the website",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "description": "Unique identifier for the content" },
+        "value": { "type": "string", "description": "The actual text or image URL" },
+        "type": { "type": "string", "enum": ["text", "image"], "description": "Type of content" },
+        "description": { "type": "string", "description": "What this content is for" }
+      },
+      "required": ["key", "value", "type"]
+    },
+    "MenuItem": {
+      "title": "Menu Item",
+      "description": "A pizza or item on the menu",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "image_url": { "type": "string" },
+        "category": { "type": "string" }
+      },
+      "required": ["name", "price", "category"]
+    }
+  },
+  "firestore": {
+    "/gallery": {
+      "schema": "GalleryItem",
+      "description": "Collection of gallery images"
+    },
+    "/site_content": {
+      "schema": "SiteContent",
+      "description": "Collection of dynamic site content"
+    },
+    "/menu": {
+      "schema": "MenuItem",
+      "description": "Collection of menu items"
+    }
+  }
+}

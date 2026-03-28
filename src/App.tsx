@@ -27,21 +27,13 @@ import {
   Minus
 } from 'lucide-react';
 import { MenuItem, Review, CartItem, GalleryItem, SiteContentItem } from './types';
-import { db, auth, loginWithGoogle, logout, handleFirestoreError, OperationType } from './firebase';
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  query, 
-  orderBy,
-  setDoc
-} from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+
+export interface User {
+  email: string;
+  token: string;
+}
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -92,11 +84,13 @@ const AuthContext = React.createContext<{
   user: User | null;
   loading: boolean;
   isAdmin: boolean;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }>({
   user: null,
   loading: true,
   isAdmin: false,
+  login: async () => {},
   logout: async () => {},
 });
 
@@ -953,24 +947,27 @@ const Contact = () => {
 };
 
 const AdminLogin = () => {
-  const { user, isAdmin, loading } = useContext(AuthContext);
+  const { user, isAdmin, loading, login } = useContext(AuthContext);
   const navigate = useNavigate();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!loading && user) {
       if (isAdmin) {
         navigate('/admin/dashboard');
-      } else {
-        // Not an admin, maybe show a message or redirect
       }
     }
   }, [user, isAdmin, loading, navigate]);
 
-  const handleGoogleLogin = async () => {
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
     try {
-      await loginWithGoogle();
-    } catch (error) {
-      console.error("Login failed", error);
+      await login(email, password);
+    } catch (err: any) {
+      setError(err.message || "Login failed");
     }
   };
 
@@ -987,21 +984,47 @@ const AdminLogin = () => {
           <p className="text-white/30 mt-3 font-medium uppercase tracking-widest text-xs">Acesso Administrativo</p>
         </div>
 
-        <div className="space-y-8">
+        <form onSubmit={handleLogin} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium mb-2 text-white/70">Email</label>
+            <input 
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary transition-colors"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2 text-white/70">Senha</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-primary transition-colors"
+              required
+            />
+          </div>
+          
+          {error && (
+            <p className="text-red-400 text-sm font-bold bg-red-400/10 py-3 px-4 rounded-xl">
+              {error}
+            </p>
+          )}
+
           <button 
-            onClick={handleGoogleLogin}
-            className="w-full py-5 bg-white text-black hover:bg-white/90 rounded-2xl font-bold transition-all text-lg shadow-xl flex items-center justify-center gap-4"
+            type="submit"
+            className="w-full py-4 bg-primary text-white hover:bg-primary-dark rounded-xl font-bold transition-all text-lg shadow-xl"
           >
-            <img src="https://www.google.com/favicon.ico" className="w-6 h-6" alt="Google" />
-            Entrar com Google
+            Entrar
           </button>
           
           {!isAdmin && user && (
-            <p className="text-red-400 text-sm text-center font-bold bg-red-400/10 py-3 rounded-xl">
+            <p className="text-red-400 text-sm text-center font-bold bg-red-400/10 py-3 rounded-xl mt-4">
               Acesso restrito a administradores.
             </p>
           )}
-        </div>
+        </form>
       </div>
     </div>
   );
@@ -1029,39 +1052,41 @@ const AdminDashboard = () => {
       if (activeTab === 'menu') {
         const { id, ...data } = editingItem;
         if (id) {
-          await updateDoc(doc(db, 'menu', id), data);
+          await fetch(`/api/menu/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         } else {
-          await addDoc(collection(db, 'menu'), data);
+          await fetch(`/api/menu`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         }
       } else if (activeTab === 'gallery') {
         const { id, ...data } = editingItem;
         if (id) {
-          await updateDoc(doc(db, 'gallery', id), data);
+          await fetch(`/api/gallery/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         } else {
-          await addDoc(collection(db, 'gallery'), data);
+          await fetch(`/api/gallery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         }
       } else if (activeTab === 'content') {
         const { id, ...data } = editingItem;
         if (id) {
-          await updateDoc(doc(db, 'site_content', id), data);
+          await fetch(`/api/content/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         } else {
-          await addDoc(collection(db, 'site_content'), data);
+          await fetch(`/api/content`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
         }
       }
       setIsModalOpen(false);
       setEditingItem(null);
+      window.location.reload(); // Reload to fetch new data
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, activeTab);
+      console.error("Save failed", error);
     }
   };
 
   const handleDelete = async () => {
     if (itemToDelete) {
       try {
-        await deleteDoc(doc(db, itemToDelete.collection, itemToDelete.id));
+        await fetch(`/api/${itemToDelete.collection}/${itemToDelete.id}`, { method: 'DELETE' });
         setItemToDelete(null);
+        window.location.reload(); // Reload to fetch new data
       } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, itemToDelete.collection);
+        console.error("Delete failed", error);
       }
     }
   };
@@ -1267,57 +1292,96 @@ export default function App() {
 
   // Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
-        // Simple admin check: check if email matches or check a user doc
-        const adminEmail = "brauliocarvalho2003@gmail.com";
-        setIsAdmin(user.email === adminEmail);
-      } else {
-        setIsAdmin(false);
-      }
-      setLoadingAuth(false);
+    const token = localStorage.getItem('token');
+    const email = localStorage.getItem('email');
+    if (token && email) {
+      setUser({ email, token });
+      setIsAdmin(true); // Assuming if they have token they are admin
+    } else {
+      setUser(null);
+      setIsAdmin(false);
+    }
+    setLoadingAuth(false);
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
     });
-    return () => unsubscribe();
-  }, []);
+    const data = await res.json();
+    if (data.success) {
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('email', email);
+      setUser({ email, token: data.token });
+      setIsAdmin(true);
+    } else {
+      throw new Error(data.message || 'Login failed');
+    }
+  };
 
-  // Menu Listener
-  useEffect(() => {
-    const q = query(collection(db, 'menu'), orderBy('name'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MenuItem));
-      setMenu(items);
+  const logout = async () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('email');
+    setUser(null);
+    setIsAdmin(false);
+  };
+
+  // Menu Fetcher
+  const fetchMenu = useCallback(async () => {
+    try {
+      const res = await fetch('/api/menu');
+      const data = await res.json();
+      setMenu(data);
+    } catch (error) {
+      console.error("Failed to fetch menu", error);
+    } finally {
       setLoadingMenu(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'menu'));
-    return () => unsubscribe();
+    }
   }, []);
 
-  // Gallery Listener
   useEffect(() => {
-    const q = query(collection(db, 'gallery'), orderBy('order'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as GalleryItem));
-      setGallery(items);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'gallery'));
-    return () => unsubscribe();
+    fetchMenu();
+  }, [fetchMenu]);
+
+  // Gallery Fetcher
+  const fetchGallery = useCallback(async () => {
+    try {
+      const res = await fetch('/api/gallery');
+      const data = await res.json();
+      setGallery(data);
+    } catch (error) {
+      console.error("Failed to fetch gallery", error);
+    }
   }, []);
 
-  // Site Content Listener
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'site_content'), (snapshot) => {
-      const content: Record<string, string> = {};
-      const raw: SiteContentItem[] = [];
-      snapshot.docs.forEach(doc => {
-        const data = doc.data() as any;
-        content[data.key] = data.value;
-        raw.push({ id: doc.id, ...data });
-      });
-      setSiteContent(content);
-      setRawSiteContent(raw);
+    fetchGallery();
+  }, [fetchGallery]);
+
+  // Site Content Fetcher
+  const fetchSiteContent = useCallback(async () => {
+    try {
+      const [resMap, resRaw] = await Promise.all([
+        fetch('/api/content'),
+        fetch('/api/content/raw')
+      ]);
+      const contentMap = await resMap.json();
+      const rawContent = await resRaw.json();
+      
+      setSiteContent(contentMap);
+      setRawSiteContent(rawContent.map((item: any) => ({ id: item.key, ...item })));
+    } catch (error) {
+      console.error("Failed to fetch site content", error);
+    } finally {
       setLoadingSite(false);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'site_content'));
-    return () => unsubscribe();
+    }
   }, []);
+
+  useEffect(() => {
+    fetchSiteContent();
+  }, [fetchSiteContent]);
 
   const addToCart = (item: MenuItem) => {
     setCart(prev => {

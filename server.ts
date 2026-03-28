@@ -103,6 +103,15 @@ db.serialize(() => {
     );
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS gallery (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      caption TEXT,
+      "order" INTEGER DEFAULT 0
+    );
+  `);
+
   // Seed initial data if empty
   db.get("SELECT COUNT(*) as count FROM site_content", async (err, row: any) => {
     if (!err && row.count === 0) {
@@ -222,10 +231,76 @@ app.get("/api/content", async (req, res) => {
   }
 });
 
+app.get("/api/content/raw", async (req, res) => {
+  try {
+    const content = await dbAll("SELECT * FROM site_content");
+    res.json(content);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.post("/api/content", async (req, res) => {
   try {
     const { key, value } = req.body;
     await dbRun("INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)", [key, value]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.put("/api/content/:key", async (req, res) => {
+  try {
+    const { value } = req.body;
+    await dbRun("UPDATE site_content SET value = ? WHERE key = ?", [value, req.params.key]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.delete("/api/content/:key", async (req, res) => {
+  try {
+    await dbRun("DELETE FROM site_content WHERE key = ?", [req.params.key]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.get("/api/gallery", async (req, res) => {
+  try {
+    const gallery = await dbAll("SELECT id, url as imageUrl, caption as alt, \"order\" FROM gallery ORDER BY \"order\" ASC");
+    res.json(gallery);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post("/api/gallery", async (req, res) => {
+  try {
+    const { imageUrl, alt, order } = req.body;
+    await dbRun("INSERT INTO gallery (url, caption, \"order\") VALUES (?, ?, ?)", [imageUrl, alt, order || 0]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.put("/api/gallery/:id", async (req, res) => {
+  try {
+    const { imageUrl, alt, order } = req.body;
+    await dbRun("UPDATE gallery SET url = ?, caption = ?, \"order\" = ? WHERE id = ?", [imageUrl, alt, order || 0, req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.delete("/api/gallery/:id", async (req, res) => {
+  try {
+    await dbRun("DELETE FROM gallery WHERE id = ?", [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
